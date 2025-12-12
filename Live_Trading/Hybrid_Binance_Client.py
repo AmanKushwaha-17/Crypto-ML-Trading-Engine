@@ -26,7 +26,7 @@ class HybridBinanceClient:
     """
     
     def __init__(self):
-        # MAINNET: Real market data (no API keys needed for public data)
+        # MAINNET: Real market data
         self.mainnet_client = Client("", "")
         
         # TESTNET: Paper trading execution
@@ -36,22 +36,39 @@ class HybridBinanceClient:
         self.testnet_client = Client(
             testnet_key, 
             testnet_secret,
-            testnet=True
+            testnet=True,
+            tld='com'  # Explicitly set domain
         )
+        
+        # FIX: Sync time with Binance servers
+        try:
+            self.testnet_client.get_server_time()
+        except Exception as e:
+            logger.warning(f"Time sync failed: {e}")
         
         self.symbol = 'ETHUSDT'
         self.leverage = 2
         
-        # Set leverage on testnet
-        try:
-            self.testnet_client.futures_change_leverage(
-                symbol=self.symbol,
-                leverage=self.leverage
-            )
-            logger.info(f"Testnet leverage set to {self.leverage}x")
-        except Exception as e:
-            logger.error(f"Failed to set testnet leverage: {e}")
+        # Set leverage with retry
+        self._set_leverage_with_retry()
     
+    def _set_leverage_with_retry(self, max_retries=3):
+        """Set leverage with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                self.testnet_client.futures_change_leverage(
+                    symbol=self.symbol,
+                    leverage=self.leverage
+                )
+                logger.info(f"Testnet leverage set to {self.leverage}x")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to set leverage (attempt {attempt+1}): {e}")
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(2)
+        return False
+        
     # ========================================
     # MARKET DATA (from MAINNET - real prices)
     # ========================================

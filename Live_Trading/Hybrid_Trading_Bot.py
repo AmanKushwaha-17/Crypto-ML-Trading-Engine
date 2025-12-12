@@ -17,6 +17,7 @@ from binance.enums import *
 from typing import Dict, List, Optional
 import warnings
 warnings.filterwarnings('ignore', category=UserWarning)
+import joblib
 
 
 # Import your modules
@@ -24,6 +25,7 @@ from Hybrid_Binance_Client import HybridBinanceClient
 from Telegram_alert import TelegramBot
 from feature_builder import build_crypto_features
 from analytic import PerformanceAnalytics
+from supabase_storage import SupabaseStorage
 
 
 
@@ -72,9 +74,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-logging.FileHandler(Config.LOG_PATH, encoding="utf-8")
-
-
 # ============================================================
 # STRATEGY
 # ============================================================
@@ -99,16 +98,18 @@ class TradingStrategy:
             'obv_ema', 'atr_pct', 'mfi'
         ] + [f'return_lag_{i}' for i in [1, 2, 3, 4, 6, 8, 12, 24]]
     
+    
+
     def load_model(self, path: str):
-        """Load trained model"""
         try:
-            with open(path, 'rb') as f:
-                model = pickle.load(f)
-            logger.info(f"Model loaded: {path}")
+            # mmap_mode='r' loads the model MUCH faster and uses less RAM
+            model = joblib.load(path, mmap_mode="r")
+            logger.info(f"Model loaded fast: {path}")
             return model
         except Exception as e:
             logger.error(f"Model load failed: {e}")
             raise
+
     
     def generate_signal(self, df: pd.DataFrame) -> Optional[Dict]:
         """Generate trading signal from market data"""
@@ -192,12 +193,45 @@ class TradingStrategy:
 class PositionManager:
     """Track positions and calculate PnL"""
     
-    def __init__(self):
+    def __init__(self,client):
         self.active_position = None
+        self.client = client  # Store client reference
+    
+
+    def get_testnet_position(self) -> Optional[Dict]:
+        """Get current testnet position info"""
+        try:
+            positions = self.testnet_client.futures_position_information(symbol=self.symbol)
+            
+            for pos in positions:
+                if pos['symbol'] == self.symbol:
+                    pos_amt = float(pos['positionAmt'])
+                    if abs(pos_amt) > 0.001:
+                        # FIXED: Handle missing 'leverage' key safely
+                        leverage = int(pos.get('leverage', self.leverage))  # Fallback to class leverage
+                        
+                        return {
+                            'side': 'LONG' if pos_amt > 0 else 'SHORT',
+                            'quantity': abs(pos_amt),
+                            'entry_price': float(pos['entryPrice']),
+                            'mark_price': float(pos['markPrice']),
+                            'unrealized_pnl': float(pos['unRealizedProfit']),
+                            'leverage': leverage,
+                            'liquidation_price': float(pos.get('liquidationPrice', 0))  # Also handle missing liq price
+                        }
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get testnet position: {e}")
+            return None
     
     def open_position(self, signal: Dict, balance: float, actual_entry: float):
         """Record new position"""
         # FIXED: Apply leverage to position size
+        position_value = balance * Config.POSITION_SIZE_PCT * Config.LEVERAGE
+        if actual_entry <= 0:
+            logger.error(f"Invalid entry price: {actual_entry}")
+            return
+        
         position_value = balance * Config.POSITION_SIZE_PCT * Config.LEVERAGE
         quantity = position_value / actual_entry
         
@@ -313,15 +347,17 @@ class HybridTradingBot:
         
         # Initialize components
         self.strategy = TradingStrategy(Config.MODEL_PATH)
-        self.position_mgr = PositionManager()
+        self.position_mgr = PositionManager(self.client)
         self.telegram = TelegramBot()
         self.analytics = PerformanceAnalytics()
         
-        self.trades_history = self.load_trades()
-        self.bot_state = self.load_state()
+        self.db = SupabaseStorage()
+        self.bot_state = self.db.get_state()
+        self.peak_balance = self.bot_state['peak_balance']
 
         # Load historical trades into analytics
-        for trade in self.trades_history:
+        trades = self.db.get_all_trades()  # ✅ Get from Supabase
+        for trade in trades:
             self.analytics.add_trade(trade)
         
         # FIXED: Initialize peak balance (will never be zero now)
@@ -347,37 +383,6 @@ class HybridTradingBot:
             f"<i>Paper trading with real market data</i>"
         )
     
-    def load_trades(self) -> List[Dict]:
-        """Load trade history"""
-        try:
-            with open(Config.TRADES_DB, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return []
-    
-    def save_trades(self):
-        """Save trade history"""
-        with open(Config.TRADES_DB, 'w') as f:
-            json.dump(self.trades_history, f, indent=2, default=str)
-    
-    def load_state(self) -> Dict:
-        """Load bot state"""
-        try:
-            with open(Config.STATE_DB, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            return {
-                'daily_pnl': 0.0,
-                'last_reset_date': datetime.now().date().isoformat(),
-                'is_active': True,
-                'total_trades': 0,
-                'winning_trades': 0
-            }
-    
-    def save_state(self):
-        """Save bot state"""
-        with open(Config.STATE_DB, 'w') as f:
-            json.dump(self.bot_state, f, indent=2)
     
     def check_risk_limits(self, balance: float) -> bool:
         """Verify risk limits"""
@@ -420,10 +425,11 @@ class HybridTradingBot:
         # Reset daily PnL
         today = datetime.now().date().isoformat()
         if today != self.bot_state['last_reset_date']:
-            self.bot_state['daily_pnl'] = 0.0
-            self.bot_state['last_reset_date'] = today
-            self.save_state()
+            self.db.reset_daily_pnl()
+            self.bot_state = self.db.get_state()
             logger.info("Daily PnL reset")
+
+            self.db.update_peak_balance(self.peak_balance)
         
         return True
     
@@ -453,146 +459,168 @@ class HybridTradingBot:
                 f"<i>Consider closing early</i>"
             )
     
-    def run_iteration(self):
-        """Single bot iteration"""
+    def run_iteration(self, measure: bool = False):
+        """Single bot iteration (optimized Supabase + full timing)"""
+        t0 = time.perf_counter()
+        t_fetch = t_signal = t_order = t_post = t_supabase = None
+
         try:
             logger.info("="*60)
             logger.info(f"Iteration at {datetime.now()}")
-            
-            # Get testnet balance
+
+            # -------------------------------------------------------
+            # 1️⃣ SUPABASE - Load state ONCE (MEASURED)
+            # -------------------------------------------------------
+            if measure:
+                t_supa_start = time.perf_counter()
+
+            state = self.db.get_state()   # ONE GET call only
+
+            daily_pnl = state["daily_pnl"]
+            peak_balance = state["peak_balance"]
+            last_reset_date = state["last_reset_date"]
+
+            if measure:
+                t_supa_end = time.perf_counter()
+                t_supabase = t_supa_end - t_supa_start
+
+            # -------------------------------------------------------
+            # 2️⃣ Get balance & risk check
+            # -------------------------------------------------------
             balance = self.client.get_testnet_balance()
             logger.info(f"Testnet balance: ${balance:.2f}")
-            
-            # FIXED: Handle invalid balance
+
             if balance <= 0:
                 logger.error("Invalid testnet balance - skipping iteration")
                 return
-            
-            # Risk checks (30% account drawdown limit)
+
             if not self.check_risk_limits(balance):
                 return
-            
-            # Monitor existing position
+
+            # -------------------------------------------------------
+            # 3️⃣ Daily reset (local only — NO Supabase call)
+            # -------------------------------------------------------
+            today = datetime.now().date().isoformat()
+            if today != last_reset_date:
+                daily_pnl = 0.0
+                state["daily_pnl"] = 0.0
+                state["last_reset_date"] = today
+                logger.info("Daily PnL reset (no Supabase call yet)")
+
+            # -------------------------------------------------------
+            # 4️⃣ Active position logic
+            # -------------------------------------------------------
             if self.position_mgr.active_position:
                 self.monitor_liquidation_risk()
-                
-                # Check exit conditions (only time-based + emergency)
                 should_exit, reason = self.position_mgr.should_exit(self.client)
-                
+
                 if should_exit:
-                    logger.info(f"Closing position: {reason}")
-                    
-                    # Close on testnet
                     if self.client.close_testnet_position():
-                        # Record trade with real PnL
                         trade = self.position_mgr.close_position(self.client, reason)
-                        
-                        if trade:  # Only save if trade dict is not empty
-                            self.trades_history.append(trade)
-                            self.save_trades()
-                            
-                            # Add to analytics
-                            self.analytics.add_trade(trade)
-                            
-                            # Update state
-                            self.bot_state['daily_pnl'] += trade['pnl_usd']
-                            self.bot_state['total_trades'] += 1
-                            if trade['pnl_usd'] > 0:
-                                self.bot_state['winning_trades'] += 1
-                            self.save_state()
-                            
-                            # Get updated metrics
-                            metrics = self.analytics.calculate_metrics()
-                            balance = self.client.get_testnet_balance()
-                            
-                            # Enhanced Telegram alert with key metrics
-                            self.telegram.send_message(
-                                f"{'🟢' if trade['pnl_usd'] > 0 else '🔴'} <b>EXIT: {trade['side']}</b>\n\n"
-                                f"Entry: ${trade['entry_price']:.2f}\n"
-                                f"Exit: ${trade['exit_price']:.2f}\n"
-                                f"PnL: ${trade['pnl_usd']:.2f} ({trade['pnl_pct']:+.2f}%)\n"
-                                f"Reason: {reason}\n"
-                                f"Duration: {trade['duration_minutes']:.0f}m\n\n"
-                                f"📊 <b>Performance Metrics:</b>\n"
-                                f"Balance: ${balance:.2f}\n"
-                                f"Total Trades: {metrics['total_trades']}\n"
-                                f"Win Rate: {metrics['win_rate']:.1f}%\n"
-                                f"Sharpe Ratio: {metrics['sharpe_ratio']:.2f}\n"
-                                f"Profit Factor: {metrics['profit_factor']:.2f}\n"
-                                f"Expectancy: ${metrics['expectancy']:.2f}\n"
-                                f"Today PnL: ${self.bot_state['daily_pnl']:+.2f}"
-                            )
-                            
-                            # Print summary every 10 trades
-                            if metrics['total_trades'] % 10 == 0:
-                                self.analytics.print_summary()
+
+                        if trade:
+                            # Save trade (separate table)
+                            self.db.save_trade(trade)
+
+                            # Update state locally
+                            daily_pnl += trade["pnl_usd"]
+                            state["daily_pnl"] = daily_pnl
+                            state["total_trades"] += 1
+                            if trade["pnl_usd"] > 0:
+                                state["winning_trades"] += 1
+
+                    # SAVE STATE ONCE
+                    self.db.update_state(state)
+                    return
+
                 else:
-                    # Log current PnL (using real testnet data)
                     pnl_usd, pnl_pct = self.position_mgr.get_testnet_pnl(self.client)
-                    logger.info(f"Position open | Real PnL: ${pnl_usd:.2f} ({pnl_pct:+.2f}%)")
-                
-                return
-            
-            # Fetch real market data
-            logger.info("Fetching mainnet market data...")
-            df = self.client.get_historical_data(Config.INTERVAL, limit=500)
-            
+                    logger.info(f"Position open | PnL: {pnl_usd:.2f} ({pnl_pct:.2f}%)")
+                    return
+
+            # -------------------------------------------------------
+            # 5️⃣ FETCH MARKET DATA (TIMED)
+            # -------------------------------------------------------
+            if measure:
+                t_fetch_start = time.perf_counter()
+
+            df = self.client.get_historical_data(Config.INTERVAL, limit=250)
+
+            if measure:
+                t_fetch_end = time.perf_counter()
+                t_fetch = t_fetch_end - t_fetch_start
+
             if df.empty:
                 logger.error("No market data")
                 return
-            
-            # Generate signal
-            logger.info("Generating signal...")
+
+            # -------------------------------------------------------
+            # 6️⃣ SIGNAL GENERATION (TIMED)
+            # -------------------------------------------------------
+            if measure:
+                t_signal_start = time.perf_counter()
+
             signal = self.strategy.generate_signal(df)
-            
+
+            if measure:
+                t_signal_end = time.perf_counter()
+                t_signal = t_signal_end - t_signal_start
+
             if signal is None:
                 logger.info("No signal")
+                if measure:
+                    t_post = time.perf_counter()
+                    logger.info(
+                        f"TIMING (s): supabase={t_supabase:.4f}, fetch={t_fetch:.4f}, signal={t_signal:.4f}, total={(t_post-t0):.4f}"
+                    )
                 return
-            
-            # Open position
-            logger.info(f"Signal: {signal['direction']} @ {signal['confidence']:.1%}")
-            
-            # Get actual entry price
+
+            # -------------------------------------------------------
+            # 7️⃣ OPEN POSITION (TIMED ORDER)
+            # -------------------------------------------------------
             entry_price = self.client.get_current_price()
-            
-            # FIXED: Calculate quantity with leverage applied
             position_value = balance * Config.POSITION_SIZE_PCT * Config.LEVERAGE
-            quantity = position_value / entry_price
-            quantity = round(quantity, 3)
-            
-            logger.info(f"Position value: ${position_value:.2f} ({Config.LEVERAGE}x leverage)")
-            logger.info(f"Quantity: {quantity} {Config.SYMBOL}")
-            
-            # Place order
-            side = SIDE_BUY if signal['direction'] == 1 else SIDE_SELL
+            quantity = round(position_value / entry_price, 3)
+
+            side = SIDE_BUY if signal["direction"] == 1 else SIDE_SELL
+
+            if measure:
+                t_order_start = time.perf_counter()
+
             order = self.client.place_testnet_order(side, quantity)
-            
+
+            if measure:
+                t_order_end = time.perf_counter()
+                t_order = t_order_end - t_order_start
+
             if order:
                 self.position_mgr.open_position(signal, balance, entry_price)
-                
-                # Calculate liquidation
-                liq_price = self.client.calculate_liquidation_price(
-                    entry_price,
-                    signal['leverage'],
-                    'LONG' if signal['direction'] == 1 else 'SHORT'
+
+            # -------------------------------------------------------
+            # 8️⃣ SAVE STATE ONCE (TIMED)
+            # -------------------------------------------------------
+            if measure:
+                t_supa2_start = time.perf_counter()
+
+            self.db.update_state(state)   # ONE Supabase write only
+
+            if measure:
+                t_supa2_end = time.perf_counter()
+                t_supabase += (t_supa2_end - t_supa2_start)
+
+            # -------------------------------------------------------
+            # 9️⃣ TIMING OUTPUT
+            # -------------------------------------------------------
+            if measure:
+                t_post = time.perf_counter()
+                logger.info(
+                    f"TIMING (s): supabase={t_supabase:.4f}, fetch={t_fetch:.4f}, signal={t_signal:.4f}, order={t_order:.4f}, total={(t_post-t0):.4f}"
                 )
-                
-                self.telegram.send_message(
-                    f"🟢 <b>ENTRY: {'LONG' if signal['direction'] == 1 else 'SHORT'}</b>\n\n"
-                    f"💰 Entry: ${entry_price:.2f}\n"
-                    f"🎯 Confidence: {signal['confidence']:.1%}\n"
-                    f"⚡ Leverage: {signal['leverage']}x\n"
-                    f"💵 Size: ${position_value:.2f}\n"
-                    f"📦 Qty: {quantity}\n"
-                    f"⚠️ Liq: ${liq_price:.2f}\n\n"
-                    f"<i>Hold until {self.position_mgr.active_position['exit_time'].strftime('%H:%M')}</i>"
-                )
-            else:
-                logger.error("Order failed")
-        
+
         except Exception as e:
             logger.error(f"Iteration error: {e}", exc_info=True)
             self.telegram.send_error_alert(f"Error: {str(e)}")
+
     
     def run(self):
         """Main loop"""
@@ -651,22 +679,91 @@ def print_performance_stats():
 # ENTRY POINT
 # ============================================================
 
+# if __name__ == "__main__":
+#     import sys
+    
+#     print("""
+#     ╔═══════════════════════════════════════════╗
+#     ║   HYBRID FORWARD TESTING BOT - FIXED     ║
+#     ║   Real Market Data + Paper Trading        ║
+#     ╚═══════════════════════════════════════════╝
+#     """)
+    
+#     # Check for stats command
+#     if len(sys.argv) > 1 and sys.argv[1] == 'stats':
+#         print_performance_stats()
+#         exit(0)
+    
+#     # Check testnet credentials
+#     if not os.getenv('BINANCE_TESTNET_API_KEY'):
+#         print("⚠️  Set testnet credentials:")
+#         print("export BINANCE_TESTNET_API_KEY='...'")
+#         print("export BINANCE_TESTNET_API_SECRET='...'")
+#         print("\nGet testnet keys: https://testnet.binancefuture.com")
+#         print("\n💡 To view stats: python Hybrid_Trading_Bot.py stats")
+#         exit(1)
+    
+#     try:
+#         bot = HybridTradingBot()
+#         bot.run()
+#     except ValueError as e:
+#         print(f"\n❌ Initialization Error: {e}")
+#         exit(1)
+#     except Exception as e:
+#         print(f"\n❌ Fatal Error: {e}")
+#         logger.error(f"Fatal error: {e}", exc_info=True)
+#         exit(1)
+
 if __name__ == "__main__":
     import sys
-    
+    import time
+
     print("""
     ╔═══════════════════════════════════════════╗
     ║   HYBRID FORWARD TESTING BOT - FIXED     ║
     ║   Real Market Data + Paper Trading        ║
     ╚═══════════════════════════════════════════╝
     """)
-    
-    # Check for stats command
+
+    # ----------------------------------------------------
+    # STATS MODE
+    # ----------------------------------------------------
     if len(sys.argv) > 1 and sys.argv[1] == 'stats':
         print_performance_stats()
         exit(0)
-    
-    # Check testnet credentials
+
+    # ----------------------------------------------------
+    # SINGLE ITERATION (MEASURED)
+    # python Hybrid_Trading_Bot.py once
+    # python Hybrid_Trading_Bot.py single
+    # python Hybrid_Trading_Bot.py measure
+    # ----------------------------------------------------
+    if len(sys.argv) > 1 and sys.argv[1] in ('once', 'single', 'measure'):
+        
+        if not os.getenv('BINANCE_TESTNET_API_KEY'):
+            print("⚠️  Set testnet credentials:")
+            print("export BINANCE_TESTNET_API_KEY='...'")
+            print("export BINANCE_TESTNET_API_SECRET='...'")
+            exit(1)
+
+        try:
+            bot = HybridTradingBot()
+        except Exception as e:
+            print(f"\n❌ Initialization Error: {e}")
+            exit(1)
+
+        print("Running single measured iteration...\n")
+        
+        t_start = time.perf_counter()
+        bot.run_iteration(measure=True)
+        t_end = time.perf_counter()
+
+        print(f"\n⏱ Total elapsed (init + iteration): {(t_end - t_start):.4f} seconds\n")
+        exit(0)
+
+    # ----------------------------------------------------
+    # DEFAULT MODE: FULL LIVE LOOP
+    # ----------------------------------------------------
     if not os.getenv('BINANCE_TESTNET_API_KEY'):
         print("⚠️  Set testnet credentials:")
         print("export BINANCE_TESTNET_API_KEY='...'")
@@ -674,7 +771,7 @@ if __name__ == "__main__":
         print("\nGet testnet keys: https://testnet.binancefuture.com")
         print("\n💡 To view stats: python Hybrid_Trading_Bot.py stats")
         exit(1)
-    
+
     try:
         bot = HybridTradingBot()
         bot.run()
