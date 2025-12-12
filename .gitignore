@@ -1,0 +1,22 @@
+# ignore environment files
+.env
+*.env
+
+# ignore python cache
+__pycache__/
+*.pyc
+
+# ignore logs and state files
+*.log
+hybrid_state.json
+hybrid_trades.json
+performance_metrics.json
+
+
+# ignore virtual environment
+venv/
+.env/
+
+# Windows junk
+Thumbs.db
+desktop.ini
