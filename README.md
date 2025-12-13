@@ -141,51 +141,51 @@ python analyze_results.py
                     │ (Hybrid_Trading_Bot.py) │
                     └───────────────┬────────┘
                                     │
-         ┌──────────────────────────┼───────────────────────────┐
-         │                          │                           │
-         ▼                          ▼                           ▼
-┌───────────────────┐    ┌─────────────────────┐    ┌────────────────────────┐
-│ Binance Mainnet    │    │ Machine Learning    │    │ Binance Testnet        │
-│ (Real Market Data) │    │ (trained_model.pkl) │    │ (Order Execution)      │
-│ - Prices           │    │ - Feature builder   │    │ - Open/close trades    │
-│ - Volume           │    │ - Predict LONG/SHORT│    │ - Real PnL calculation │
-│ - Volatility       │    │ - Confidence score  │    │ - Liquidation tracking │
-└───────────┬────────┘    └─────────────┬──────┘    └──────────────┬─────────┘
-            │                           │                           │
-            │                           │                           │
-            ▼                           ▼                           ▼
-      ┌────────────────────────────────────────────────────────────────────┐
-      │                  Trade Execution Decision Logic                    │
-      │   - Threshold checks (confidence, DD, daily loss)                 │
-      │   - Entry position sizing (with leverage)                         │
-      │   - Exit logic (time-based or emergency)                          │
-      └───────────────┬──────────────────────────────────────────────────┘
-                      │
-                      ▼
-         ┌───────────────────────────────┐
-         │   State & Trade Management    │
-         │  - hybrid_state.json          │
-         │  - hybrid_trades.json         │
-         │  - PnL tracking               │
-         └──────────────┬────────────────┘
-                        │
-                        ▼
-           ┌──────────────────────────────┐
-           │    Performance Analytics     │
-           │       (analytic.py)          │
-           │ - Sharpe Ratio               │
-           │ - Profit Factor              │
-           │ - Win Rate                   │
-           │ - Max Drawdown               │
-           └──────────────┬───────────────┘
+           ┌──────────────────────────┼───────────────────────────┐
+           │                          │                           │
+           ▼                          ▼                           ▼
+    ┌───────────────────┐     ┌─────────────────────┐    ┌────────────────────────┐
+    │ Binance Mainnet    │    │ Machine Learning    │    │ Binance Testnet        │
+    │ (Real Market Data) │    │ (trained_model.pkl) │    │ (Order Execution)      │
+    │ - Prices           │    │ - Feature builder   │    │ - Open/close trades    │
+    │ - Volume           │    │ - Predict LONG/SHORT│    │ - Real PnL calculation │
+    │ - Volatility       │    │ - Confidence score  │    │ - Liquidation tracking │
+    └───────────┬────────┘    └─────────────┬──────┘     └──────────────┬─────────┘
+                │                           │                           │
+                │                           │                           │
+                ▼                           ▼                           ▼
+          ┌────────────────────────────────────────────────────────────────────┐
+          │                  Trade Execution Decision Logic                    │
+          │   - Threshold checks (confidence, DD, daily loss)                  │
+          │   - Entry position sizing (with leverage)                          │
+          │   - Exit logic (time-based or emergency)                           │
+          └───────────────┬──────────────────────────────────────────────────┘
                           │
                           ▼
-            ┌────────────────────────────────┐
-            │   Telegram Alerts (Bot API)    │
-            │ - Entry/Exit notifications     │
-            │ - Liquidation warnings         │
-            │ - Error reporting              │
-            └────────────────────────────────┘
+           ┌───────────────────────────────┐
+           │   State & Trade Management    │
+           │  - hybrid_state.json          │
+           │  - hybrid_trades.json         │
+           │  - PnL tracking               │
+           └──────────────┬────────────────┘
+                          │
+                          ▼
+             ┌──────────────────────────────┐
+             │    Performance Analytics     │
+             │       (analytic.py)          │
+             │ - Sharpe Ratio               │
+             │ - Profit Factor              │
+             │ - Win Rate                   │
+             │ - Max Drawdown               │
+             └──────────────┬───────────────┘
+                            │
+                            ▼
+              ┌────────────────────────────────┐
+              │   Telegram Alerts (Bot API)    │
+              │ - Entry/Exit notifications     │
+              │ - Liquidation warnings         │
+              │ - Error reporting              │
+              └────────────────────────────────┘
 
 
 
