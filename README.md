@@ -1,9 +1,3 @@
-Here you go — **pure Markdown**, ready to **paste directly into `README.md`**.
-(No extra commentary, no formatting tricks.)
-
----
-
-```md
 # 🚀 Hybrid Crypto Trading Bot  
 **(Binance Mainnet Data + Testnet Execution)**
 
@@ -58,28 +52,27 @@ This version represents the **initial live trading implementation** and is kept 
 
 ## 📁 Repository Structure
 
-```
-
+```text
 .
-├── Live_Trading/              # V1 – Hybrid trading bot (legacy)
+├── Live_Trading/                  # V1 – Hybrid trading bot (legacy)
 │   ├── Hybrid_Trading_Bot.py
 │   ├── Hybrid_Binance_Client.py
 │   ├── trained_model.pkl
 │   └── ...
 │
-├── Live_Trading_V2/           # V2 – Engine-based system (current)
-│   ├── core/                  # Engine, state manager, logger
-│   ├── exchange/              # Binance data + testnet execution
-│   ├── features/              # Feature engineering
-│   ├── risk/                  # Risk manager
-│   ├── strategy/              # ML strategy (entry-only)
-│   ├── analytics/             # (future)
-│   ├── alerts/                # (future)
+├── Live_Trading_V2/               # V2 – Engine-based system (current)
+│   ├── core/                      # Engine, state manager, logger
+│   ├── exchange/                  # Binance data + testnet execution
+│   ├── features/                  # Feature engineering
+│   ├── risk/                      # Risk manager
+│   ├── strategy/                  # ML strategy (entry-only)
+│   ├── analytics/                 # (future)
+│   ├── alerts/                    # (future)
 │   ├── logs/
-│   ├── run.py                 # Scheduler entry point
+│   ├── run.py                     # Scheduler entry point
 │   └── global_trading_model.bundle
 │
-├── Training_Pipeline/         # Model training & research
+├── Training_Pipeline/             # Model training & research
 │   ├── training.ipynb
 │   ├── v-2_model.ipynb
 │   └── ...
@@ -87,6 +80,7 @@ This version represents the **initial live trading implementation** and is kept 
 ├── requirements.txt
 ├── README.md
 └── .gitignore
+
 
 ```
 
