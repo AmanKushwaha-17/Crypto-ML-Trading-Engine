@@ -1,236 +1,229 @@
-Here is a **clean, concise, professional README** you can paste directly into your GitHub repo.
-It’s shorter, polished, and still explains everything clearly.
+Here you go — **pure Markdown**, ready to **paste directly into `README.md`**.
+(No extra commentary, no formatting tricks.)
 
 ---
 
-# 🚀 Hybrid Crypto Trading Bot (Mainnet Data + Testnet Execution)
+```md
+# 🚀 Hybrid Crypto Trading Bot  
+**(Binance Mainnet Data + Testnet Execution)**
 
-A machine-learning powered trading bot that uses **real Binance mainnet market data** while executing trades safely on the **Binance Futures Testnet**.
-Includes full feature engineering, ML prediction pipeline, liquidation tracking, analytics, and Telegram alerts.
+This repository contains **two generations** of a machine-learning–driven crypto trading system designed for **safe forward testing** on Binance Futures.
+
+The project evolved from an initial **hybrid trading bot (V1)** into a **production-grade engine-based system (V2)** with clean architecture, deterministic exits, and restart-safe state management.
 
 ---
 
-## ⚡ Quick Start
+## ⚠️ Version Overview (Important)
+
+### 🟢 V1 – Hybrid Trading Bot (Legacy / Stable)
+
+**Location:** `Live_Trading/`
+
+- Monolithic execution script
+- Uses **real Binance mainnet market data**
+- Executes trades on **Binance Futures Testnet**
+- ML model predicts direction + confidence
+- Fixed HOLD_BARS–based exits
+- Telegram alerts
+- Performance analytics (Sharpe, PF, DD)
+- JSON-based trade & state tracking
+
+This version represents the **initial live trading implementation** and is kept for historical reference and comparison.
+
+---
+
+### 🔵 V2 – Engine-Based Trading System (Current / Recommended)
+
+**Location:** `Live_Trading_V2/`
+
+- Modular, production-style architecture
+- Strict separation of concerns:
+  - Engine
+  - Risk Manager
+  - Strategy (ML)
+  - Execution
+  - State Persistence
+- **ML is entry-only** (no ML exits)
+- **Deterministic time-based exits**
+- Volatility regime filtering (ATR vs ATR MA)
+- Pyramiding support in expanding volatility
+- Candle-synchronized scheduler
+- Restart-safe, crash-safe state persistence
+- Structured logging
+- Designed for long-running VM execution
+
+👉 **V2 is the recommended reference implementation.**
+
+---
+
+## 📁 Repository Structure
+
+```
+
+.
+├── Live_Trading/              # V1 – Hybrid trading bot (legacy)
+│   ├── Hybrid_Trading_Bot.py
+│   ├── Hybrid_Binance_Client.py
+│   ├── trained_model.pkl
+│   └── ...
+│
+├── Live_Trading_V2/           # V2 – Engine-based system (current)
+│   ├── core/                  # Engine, state manager, logger
+│   ├── exchange/              # Binance data + testnet execution
+│   ├── features/              # Feature engineering
+│   ├── risk/                  # Risk manager
+│   ├── strategy/              # ML strategy (entry-only)
+│   ├── analytics/             # (future)
+│   ├── alerts/                # (future)
+│   ├── logs/
+│   ├── run.py                 # Scheduler entry point
+│   └── global_trading_model.bundle
+│
+├── Training_Pipeline/         # Model training & research
+│   ├── training.ipynb
+│   ├── v-2_model.ipynb
+│   └── ...
+│
+├── requirements.txt
+├── README.md
+└── .gitignore
+
+```
+
+---
+
+## 🧠 High-Level System Concepts
+
+### V1 – Hybrid Bot Flow
+
+```
+
+Mainnet Prices → Feature Builder → ML Model
+→ Signal → Testnet Execution → JSON Logs → Analytics
+
+```
+
+### V2 – Engine-Based Architecture
+
+```
+
+Market Data
+↓
+Feature Builder
+↓
+ML Strategy (ENTRY ONLY)
+↓
+Risk Manager (permission + sizing)
+↓
+Engine (trade lifecycle owner)
+↓
+Execution (Testnet)
+↓
+State Persistence + Logs
+
+````
+
+**Key philosophy in V2:**
+
+> ML suggests.  
+> Risk decides.  
+> Engine executes.  
+> Exits are deterministic.
+
+---
+
+## ⚙️ Running the Systems
+
+### V1 – Hybrid Trading Bot
 
 ```bash
-# 1. Set Binance Testnet API credentials
-export BINANCE_TESTNET_API_KEY="your_key"
-export BINANCE_TESTNET_API_SECRET="your_secret"
+export BINANCE_TESTNET_API_KEY=...
+export BINANCE_TESTNET_API_SECRET=...
 
-# 2. Run the bot
-python Hybrid_Trading_Bot.py
+python Live_Trading/Hybrid_Trading_Bot.py
+````
 
-# 3. View performance summary
-python analyze_results.py
-```
-
----
-
-## 📁 Project Structure
-
-| File                       | Description                                      |
-| -------------------------- | ------------------------------------------------ |
-| `Hybrid_Trading_Bot.py`    | Main trading engine (signals → orders → exits)   |
-| `Hybrid_Binance_Client.py` | Fetch real mainnet data + execute testnet trades |
-| `Telegram_alert.py`        | Sends entry/exit/error alerts                    |
-| `feature_builder.py`       | Builds 40+ technical features                    |
-| `trained_model.pkl`        | Your ML model for predictions                    |
-| `analytic.py`              | Performance metrics (Sharpe, PF, DD)             |
-| `hybrid_trades.json`       | Trade history                                    |
-| `hybrid_state.json`        | Daily PnL, drawdown tracking                     |
-
----
-
-## 🧠 How the Hybrid System Works
-
-```
-Mainnet (Real Prices) → ML Model → Signal → Testnet (Execution & PnL)
-```
-
-* Uses **live market volatility, volume, liquidity**
-* Trades with **zero financial risk**
-* Calculates **real PnL**, **real liquidation prices**, and **entry/exit accuracy**
-
-This allows **forward-testing your strategy in real market conditions**.
-
----
-
-## ⚙️ Key Configurations (edit in `Config` class)
-
-```python
-SYMBOL = "ETHUSDT"        # Trading pair
-INTERVAL = "15m"          # Candle size
-POSITION_SIZE_PCT = 0.06  # 6% capital per trade
-LEVERAGE = 2              # Futures leverage
-MIN_CONFIDENCE = 0.60     # ML confidence threshold
-HOLD_BARS = 4             # Hold 1 hour (4×15m)
-```
-
----
-
-## 🔔 Telegram Alerts
-
-You receive:
-
-### Entry Alert
-
-* Signal direction
-* Entry price
-* Confidence
-* Leverage
-* Position size
-* Liquidation price
-
-### Exit Alert
-
-* Entry vs exit
-* PnL (USD and %)
-* Reason (TIME / EMERGENCY)
-* Duration
-* Updated performance metrics
-
-### Liquidation Warning
-
-Triggered when price moves too close to liquidation.
-
----
-
-## 📊 Performance Metrics
-
-Calculated in `analytic.py`:
-
-* **Win Rate**
-* **Profit Factor**
-* **Sharpe Ratio**
-* **Expectancy**
-* **Max Drawdown**
-* **Daily PnL**
-
-Run:
+Optional analytics:
 
 ```bash
-python analyze_results.py
+python Live_Trading/analyze_results.py
 ```
 
 ---
 
-## 🌀 Bot Flow (Simplified)
+### V2 – Engine-Based Trading System
 
-```
-1. Wait for candle close
-2. Fetch 500 real mainnet candles
-3. Build ML features
-4. Predict LONG / SHORT + confidence
-5. If confidence ≥ threshold → open testnet position
-6. Hold for 1 hour or emergency exit
-7. Close trade and log PnL
-8. Repeat
+```bash
+export BINANCE_TESTNET_API_KEY=...
+export BINANCE_TESTNET_API_SECRET=...
+
+cd Live_Trading_V2
+python run.py
 ```
 
-## System Architecture
----
-                   ┌────────────────────────────┐
-                   │      User / Developer       │
-                   │  - Start bot                │
-                   │  - Configure settings       │
-                   └───────────────┬────────────┘
-                                   │
-                                   ▼
-                    ┌────────────────────────┐
-                    │ Hybrid Trading Engine   │
-                    │ (Hybrid_Trading_Bot.py) │
-                    └───────────────┬────────┘
-                                    │
-           ┌──────────────────────────┼───────────────────────────┐
-           │                          │                           │
-           ▼                          ▼                           ▼
-    ┌───────────────────┐     ┌─────────────────────┐    ┌────────────────────────┐
-    │ Binance Mainnet    │    │ Machine Learning    │    │ Binance Testnet        │
-    │ (Real Market Data) │    │ (trained_model.pkl) │    │ (Order Execution)      │
-    │ - Prices           │    │ - Feature builder   │    │ - Open/close trades    │
-    │ - Volume           │    │ - Predict LONG/SHORT│    │ - Real PnL calculation │
-    │ - Volatility       │    │ - Confidence score  │    │ - Liquidation tracking │
-    └───────────┬────────┘    └─────────────┬──────┘     └──────────────┬─────────┘
-                │                           │                           │
-                │                           │                           │
-                ▼                           ▼                           ▼
-          ┌────────────────────────────────────────────────────────────────────┐
-          │                  Trade Execution Decision Logic                    │
-          │   - Threshold checks (confidence, DD, daily loss)                  │
-          │   - Entry position sizing (with leverage)                          │
-          │   - Exit logic (time-based or emergency)                           │
-          └───────────────┬──────────────────────────────────────────────────┘
-                          │
-                          ▼
-           ┌───────────────────────────────┐
-           │   State & Trade Management    │
-           │  - hybrid_state.json          │
-           │  - hybrid_trades.json         │
-           │  - PnL tracking               │
-           └──────────────┬────────────────┘
-                          │
-                          ▼
-             ┌──────────────────────────────┐
-             │    Performance Analytics     │
-             │       (analytic.py)          │
-             │ - Sharpe Ratio               │
-             │ - Profit Factor              │
-             │ - Win Rate                   │
-             │ - Max Drawdown               │
-             └──────────────┬───────────────┘
-                            │
-                            ▼
-              ┌────────────────────────────────┐
-              │   Telegram Alerts (Bot API)    │
-              │ - Entry/Exit notifications     │
-              │ - Liquidation warnings         │
-              │ - Error reporting              │
-              └────────────────────────────────┘
+The V2 system:
 
-
-
-## 🆘 Emergency Tools
-
-```python
-# Close all open testnet positions
-from Hybrid_Binance_Client import HybridBinanceClient
-HybridBinanceClient().close_testnet_position()
-```
+* Runs continuously
+* Executes **once per closed candle**
+* Is safe to restart (state is persisted)
+* Designed for VM / server deployment
 
 ---
 
-## 🛡️ Safety
+## 🔒 Risk & Safety (Both Versions)
 
-* Daily loss limit
-* Max drawdown stop
-* Liquidation proximity alerts
-* Only trades on **testnet**
-* `.env` keeps credentials private
+* Trades only on **Binance Futures Testnet**
+* Daily loss & drawdown controls
+* Confidence-based entry filtering
+* Volatility regime filtering (V2)
+* No real capital at risk
+* Credentials stored via environment variables
 
 ---
 
-## 📌 Requirements
+## 📌 What Is *Not* Included Yet (V2, by Design)
 
-```
-python >= 3.10
-binance-connector
-pandas, numpy
-scikit-learn
-requests
-python-dotenv
-```
+The following are intentionally deferred until strategy behavior is validated:
+
+* Trading fees & funding accounting
+* Telegram alerts
+* Performance analytics scripts
+* Multi-symbol portfolio execution
+
+These will be added incrementally once forward-testing results are stable.
+
+---
+
+## 🎯 Project Goal
+
+This repository is **not** a “plug-and-play trading bot”.
+
+It is a **research → forward-testing → system-design project** focused on:
+
+* learning how real trading systems are built
+* validating ML signals under live conditions
+* enforcing professional risk and execution discipline
+* evolving architecture over time
 
 ---
 
 ## ⭐ Summary
 
-This project provides a **full forward-testing framework** combining:
+This project demonstrates the **evolution of a trading system**:
 
-* Real market data
-* Machine learning
-* Paper trading
-* Automated execution
-* Analytics
-* Telegram notifications
+* V1 shows rapid prototyping and experimentation
+* V2 shows architectural maturity and production thinking
 
-Perfect for safely testing and improving algorithmic trading systems.
+Both are kept intentionally to show **learning, iteration, and system design growth**.
+
+```
+
+---
+
+If you want next:
+- a **shorter GitHub landing README**
+- a **V2-only README**
+- or a **system diagram in Markdown**
+
+just tell me.
+```
